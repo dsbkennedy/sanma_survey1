@@ -28,29 +28,59 @@ read_fn <- function(x,y) {
     mutate(across(everything(), as.character)) %>% 
     mutate(location=y) %>% 
     rename_at(vars(names(.)), ~col_names)
+  
+  date <- read_xlsx(x, sheet=y) %>% 
+    select(1) %>% 
+    filter_at(1, all_vars(grepl('date', ., ignore.case = T))) %>% 
+    rename('date'=1) %>% 
+    separate(date, ':', into=c('text', 'date_text')) %>% 
+    #mutate(date=as.character(date_text)) %>% select(date)
+    mutate(date_fmt=lubridate::parse_date_time(date_text, orders=c('mdy', 'dmy'))) %>% select(date=date_fmt)
+  
+  merged_data <- data %>% bind_cols(date)
+  
+  return(merged_data)
 }
-
+}
 aaron_data <- map2_dfr(aaron_path,aaron_sheets, read_fn) %>% mutate(lab_tech='aaron')
+aaron_missing_date <- aaron_data %>% filter(is.na(date)) %>% select(location)
 
 billy_data <- map2_dfr(billy_path,billy_sheets, read_fn) %>% mutate(lab_tech='billy')
+billy_missing_date <- billy_data %>% filter(is.na(date)) %>% select(location)
 
 maryann_data <- map2_dfr(maryann_path,maryann_sheets, read_fn) %>% mutate(lab_tech='maryann')
+maryann_missing_date <- maryann_data %>% filter(is.na(date)) %>% select(location)
 
 rina_data <- map2_dfr(rina_path,rina_sheets, read_fn) %>% mutate(lab_tech='rina')
+rina_missing_date <- rina_data %>% filter(is.na(date)) %>% select(location)
 
-all_data <- aaron_data %>% bind_rows(billy_data, maryann_data, rina_data)
+library(lubridate)
 
-test <- all_data %>% str_replace_all(mda_code, "\\(.+?\\)\\", "")
+my_col <- c("ascaris_egg_1", "hookworm_egg_2")
+
+all_data <- aaron_data %>% bind_rows(billy_data, maryann_data, rina_data) %>% 
+  mutate(date_clean=case_when(date==ymd(20220111) ~ ymd(20221101), 
+                              date==ymd(20220211) ~ ymd(20221102), 
+                              date==ymd(20220311) ~ ymd(20221103), 
+                              date==ymd(20220411) ~ ymd(20221104), 
+                              date==ymd(20221128) ~ ymd(20221028), 
+                              TRUE ~ ymd(date))) %>% 
+  mutate(late_pd_samples=case_when(grepl("L", mda_code) ~1, TRUE ~ 0)) %>% 
+  mutate(mda_code_upd=str_replace(mda_code, "\\s[^ ]+$", "")) %>% 
+  mutate(across(.cols = ascaris_egg_1:other_epg, str_extract, pattern = "\\d+", .names="{.col}_upd")) %>% 
+  mutate(across(.cols = ascaris_egg_1_upd:other_epg_upd, as.numeric))
 
 
-pacman::p_load(qdap)
-bracketX(all_data$mda_code) -> all_data$mda_code
+
+all_data %>% count(date_clean, lab_tech) %>% 
+  ggplot(aes(x=date_clean, y=n)) +
+  geom_col() +
+  facet_wrap(~ lab_tech)
+
 
 write.csv(all_data, 
           '/Users/DK_kirby/Library/CloudStorage/OneDrive-UNSW/Vanuatu NTD ME/Data/Lab results/Sanma/second_data_entry.csv')
-}
 
-second_lab_data <- load_all_data_fn()
 
 first_lab_data <- '/Users/DK_kirby/Library/CloudStorage/OneDrive-UNSW/Vanuatu NTD ME/Data/Lab results/Sanma/sanma_snf_results_20221109.xlsx'
 first_lab_data <- read_xlsx(first_lab_data, sheet='data') %>% select(2:16)
